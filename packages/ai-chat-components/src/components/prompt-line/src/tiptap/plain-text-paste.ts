@@ -15,16 +15,25 @@
  */
 
 import { Extension } from '@tiptap/core';
-import type { Schema } from '@tiptap/pm/model';
+import { Fragment, Slice, type Schema } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 
-function linesToNodes(schema: Schema, lines: string[]) {
-  return lines.map((line) => {
-    if (line.length === 0) {
-      return schema.nodes.paragraph.create();
-    }
-    return schema.nodes.paragraph.create(null, schema.text(line));
-  });
+/**
+ * Builds a slice of one paragraph per line, open on both ends so the first
+ * line joins the paragraph before the cursor and the last line joins the
+ * text after it. A closed list of paragraphs would instead be placed beside
+ * the cursor's paragraph, leaving an empty line above text pasted into an
+ * empty editor and splitting existing text around inline pastes.
+ */
+function textToSlice(schema: Schema, text: string): Slice {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const paragraphs = lines.map((line) =>
+    schema.nodes.paragraph.create(
+      null,
+      line.length === 0 ? null : schema.text(line)
+    )
+  );
+  return new Slice(Fragment.from(paragraphs), 1, 1);
 }
 
 function createPastePlugin(): Plugin {
@@ -36,12 +45,9 @@ function createPastePlugin(): Plugin {
           return false;
         }
 
-        const { schema } = view.state;
-        const lines = text.replace(/\r\n?/g, '\n').split('\n');
-        const nodes = linesToNodes(schema, lines);
-
-        const { from, to } = view.state.selection;
-        const tr = view.state.tr.replaceWith(from, to, nodes);
+        const tr = view.state.tr.replaceSelection(
+          textToSlice(view.state.schema, text)
+        );
         view.dispatch(tr.scrollIntoView());
         return true;
       },
@@ -58,10 +64,6 @@ function createPastePlugin(): Plugin {
           return true; // block the drop
         }
 
-        const { schema } = view.state;
-        const lines = text.replace(/\r\n?/g, '\n').split('\n');
-        const nodes = linesToNodes(schema, lines);
-
         const pos = view.posAtCoords({
           left: event.clientX,
           top: event.clientY,
@@ -70,7 +72,11 @@ function createPastePlugin(): Plugin {
           return true;
         }
 
-        const tr = view.state.tr.replaceWith(pos.pos, pos.pos, nodes);
+        const tr = view.state.tr.replace(
+          pos.pos,
+          pos.pos,
+          textToSlice(view.state.schema, text)
+        );
         view.dispatch(tr.scrollIntoView());
         event.preventDefault();
         return true;
